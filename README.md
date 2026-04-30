@@ -1,6 +1,6 @@
 # Personal Finance Management
 
-A web app that links your bank accounts via **Stripe Financial Connections** and syncs your transaction history to a **Google Spreadsheet**.
+A web app that links your bank accounts via **Stripe Financial Connections** and syncs your transaction history to a **Google Spreadsheet**. All secrets are stored encrypted in **AWS Parameter Store** — nothing sensitive ever touches your code or a file.
 
 ## How It Works
 
@@ -16,6 +16,7 @@ Each linked account gets its own tab in the spreadsheet with these columns:
 ## Prerequisites
 
 - Python 3.9+
+- AWS CLI configured (`aws configure`)
 - A [Stripe account](https://stripe.com) with Financial Connections enabled
 - A Google Cloud project with the Sheets API enabled
 
@@ -39,25 +40,39 @@ pip install -r requirements.txt
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com) → **APIs & Services → Library**
 2. Enable the **Google Sheets API**
-3. Go to **Credentials → Create Credentials → Service Account**, then download the JSON key and save it as `service_account.json` in the project root
+3. Go to **Credentials → Create Credentials → Service Account**, download the JSON key
 4. Create a blank Google Sheet
-5. Share the sheet with the service account email (found inside `service_account.json` under `client_email`) with **Editor** access
+5. Share the sheet with the service account email (found in the JSON under `client_email`) with **Editor** access
 6. Copy the spreadsheet ID from the URL: `https://docs.google.com/spreadsheets/d/`**`THIS_PART`**`/edit`
 
-### 4. Configure environment variables
+### 4. Store secrets in AWS Parameter Store
+
+Run these four commands in your terminal, substituting your real values. All parameters are stored as **SecureString** (encrypted with the free AWS managed key):
 
 ```bash
-cp .env.example .env
+aws ssm put-parameter \
+  --name "/stripe-bank-sync/stripe-secret-key" \
+  --value "sk_test_..." \
+  --type SecureString
+
+aws ssm put-parameter \
+  --name "/stripe-bank-sync/stripe-publishable-key" \
+  --value "pk_test_..." \
+  --type SecureString
+
+aws ssm put-parameter \
+  --name "/stripe-bank-sync/google-spreadsheet-id" \
+  --value "your_spreadsheet_id_here" \
+  --type SecureString
+
+# Store the entire service account JSON file as a single parameter
+aws ssm put-parameter \
+  --name "/stripe-bank-sync/google-service-account-json" \
+  --value file://service_account.json \
+  --type SecureString
 ```
 
-Edit `.env`:
-
-```env
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_PUBLISHABLE_KEY=pk_test_...
-GOOGLE_SPREADSHEET_ID=your_spreadsheet_id_here
-GOOGLE_SERVICE_ACCOUNT_FILE=service_account.json
-```
+After storing them, you can delete `service_account.json` from your machine — it is no longer needed.
 
 ### 5. Run
 
@@ -71,16 +86,19 @@ Open [http://localhost:5000](http://localhost:5000) in your browser.
 
 ```
 ├── app.py                  # Flask server & Stripe Financial Connections logic
+├── config.py               # AWS Parameter Store secret fetching (cached)
 ├── sheets.py               # Google Sheets writer
 ├── templates/
 │   └── index.html          # Frontend UI with Stripe.js
 ├── requirements.txt
-├── .env.example
+├── .env.example            # AWS credentials reference (local dev only)
 └── .gitignore
 ```
 
 ## Security Notes
 
-- Your `.env` and `service_account.json` are excluded from version control via `.gitignore` — never commit them
+- All secrets live in AWS Parameter Store encrypted at rest — no `.env`, no JSON files on disk
+- `service_account.json` is gitignored; delete it after uploading to Parameter Store
 - Stripe handles all bank credential collection; your server never sees login details
+- On AWS (EC2/Lambda/ECS), attach an IAM role with `ssm:GetParameter` permission — no credentials file needed at all
 - Use test mode keys (`sk_test_`, `pk_test_`) during development

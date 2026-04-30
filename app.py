@@ -1,18 +1,15 @@
-import os
 import stripe
-from flask import Flask, render_template, request, jsonify, redirect, url_for
-from dotenv import load_dotenv
+from flask import Flask, render_template, request, jsonify
+import config
 from sheets import write_transactions_to_sheet
 
-load_dotenv()
-
 app = Flask(__name__)
-stripe.api_key = os.environ["STRIPE_SECRET_KEY"]
+stripe.api_key = config.get("/stripe-bank-sync/stripe-secret-key")
 
 
 @app.route("/")
 def index():
-    return render_template("index.html", stripe_publishable_key=os.environ["STRIPE_PUBLISHABLE_KEY"])
+    return render_template("index.html", stripe_publishable_key=config.get("/stripe-bank-sync/stripe-publishable-key"))
 
 
 @app.route("/create-session", methods=["POST"])

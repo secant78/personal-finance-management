@@ -1,18 +1,20 @@
-import os
+import json
 import datetime
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+import config
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-SPREADSHEET_ID = os.environ.get("GOOGLE_SPREADSHEET_ID")
 
 
 def _get_service():
-    creds = Credentials.from_service_account_file(
-        os.environ["GOOGLE_SERVICE_ACCOUNT_FILE"],
-        scopes=SCOPES,
-    )
+    service_account_info = json.loads(config.get("/stripe-bank-sync/google-service-account-json"))
+    creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
     return build("sheets", "v4", credentials=creds)
+
+
+def _spreadsheet_id() -> str:
+    return config.get("/stripe-bank-sync/google-spreadsheet-id")
 
 
 def write_transactions_to_sheet(transactions: list, account_id: str) -> str:
@@ -40,9 +42,10 @@ def write_transactions_to_sheet(transactions: list, account_id: str) -> str:
             ", ".join(txn.get("category", []) or []),
         ])
 
+    sid = _spreadsheet_id()
     range_name = f"{tab_name}!A1"
     sheet.values().update(
-        spreadsheetId=SPREADSHEET_ID,
+        spreadsheetId=sid,
         range=range_name,
         valueInputOption="USER_ENTERED",
         body={"values": rows},
@@ -52,7 +55,7 @@ def write_transactions_to_sheet(transactions: list, account_id: str) -> str:
     sheet_id = _get_sheet_id(service, tab_name)
     if sheet_id is not None:
         service.spreadsheets().batchUpdate(
-            spreadsheetId=SPREADSHEET_ID,
+            spreadsheetId=sid,
             body={
                 "requests": [{
                     "repeatCell": {
@@ -64,21 +67,22 @@ def write_transactions_to_sheet(transactions: list, account_id: str) -> str:
             },
         ).execute()
 
-    return f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
+    return f"https://docs.google.com/spreadsheets/d/{sid}"
 
 
 def _ensure_tab(service, tab_name: str):
-    spreadsheet = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+    sid = _spreadsheet_id()
+    spreadsheet = service.spreadsheets().get(spreadsheetId=sid).execute()
     existing = [s["properties"]["title"] for s in spreadsheet["sheets"]]
     if tab_name not in existing:
         service.spreadsheets().batchUpdate(
-            spreadsheetId=SPREADSHEET_ID,
+            spreadsheetId=sid,
             body={"requests": [{"addSheet": {"properties": {"title": tab_name}}}]},
         ).execute()
 
 
 def _get_sheet_id(service, tab_name: str):
-    spreadsheet = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+    spreadsheet = service.spreadsheets().get(spreadsheetId=_spreadsheet_id()).execute()
     for s in spreadsheet["sheets"]:
         if s["properties"]["title"] == tab_name:
             return s["properties"]["sheetId"]
