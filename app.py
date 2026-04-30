@@ -1,3 +1,4 @@
+import boto3
 import stripe
 from flask import Flask, render_template, request, jsonify
 import config
@@ -5,6 +6,15 @@ from sheets import write_transactions_to_sheet
 
 app = Flask(__name__)
 stripe.api_key = config.get("/stripe-bank-sync/stripe-secret-key")
+
+
+def _save_account_id(account_id: str):
+    boto3.client("ssm", region_name="us-east-1").put_parameter(
+        Name="/stripe-bank-sync/linked-account-id",
+        Value=account_id,
+        Type="String",
+        Overwrite=True,
+    )
 
 
 @app.route("/")
@@ -30,6 +40,8 @@ def sync():
 
     if not account_id:
         return jsonify({"error": "account_id is required"}), 400
+
+    _save_account_id(account_id)
 
     # Refresh transactions so we get the latest data
     stripe.financial_connections.Account.refresh_account(
