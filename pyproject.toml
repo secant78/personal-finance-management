@@ -16,5 +16,8 @@ dependencies = [
     "apscheduler>=3.10",
 ]
 
+[tool.setuptools]
+py-modules = ["app", "config", "sync", "sync_job", "sheets"]
+
 [project.scripts]
 bank-sync = "sync_job:cli"
