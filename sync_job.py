@@ -1,10 +1,13 @@
 """
-Weekly cron job — fetches bank transactions and writes them to Google Sheets.
-Run directly: python sync_job.py
-Scheduled via Windows Task Scheduler using setup_scheduler.ps1
+Usage:
+  bank-sync          # pull transactions into Google Sheets now
+  bank-sync --help   # show options
+
+Scheduled automatically every Monday at 8am via setup_scheduler.ps1
 """
 import sys
 import logging
+import click
 import stripe
 import config
 from sheets import write_transactions_to_sheet
@@ -44,12 +47,16 @@ def fetch_transactions(account_id: str) -> list:
     return transactions
 
 
-def run():
+@click.command()
+@click.option("--account-id", default=None, help="Stripe Financial Connections account ID. Defaults to the saved linked account.")
+def cli(account_id):
+    """Pull bank transactions from Stripe and write them to Google Sheets."""
     stripe.api_key = config.get("/stripe-bank-sync/stripe-secret-key")
-    account_id = config.get("/stripe-bank-sync/linked-account-id")
 
-    log.info(f"Starting weekly sync for account {account_id}")
+    if not account_id:
+        account_id = config.get("/stripe-bank-sync/linked-account-id")
 
+    log.info(f"Syncing account {account_id} ...")
     transactions = fetch_transactions(account_id)
 
     if not transactions:
@@ -57,8 +64,8 @@ def run():
         return
 
     url = write_transactions_to_sheet(transactions, account_id)
-    log.info(f"Synced {len(transactions)} transactions → {url}")
+    log.info(f"Done. Synced {len(transactions)} transactions → {url}")
 
 
 if __name__ == "__main__":
-    run()
+    cli()
