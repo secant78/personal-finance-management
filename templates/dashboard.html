@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — Personal Finance{% endblock %}
+
+{% block content %}
+
+<!-- Status Cards -->
+<div class="status-grid">
+  <div class="status-card {{ 'ok' if aws_ok else 'error' }}">
+    <div class="status-icon">{{ '✓' if aws_ok else '✗' }}</div>
+    <div class="status-label">AWS</div>
+  </div>
+  <div class="status-card {{ 'ok' if stripe_ok else 'error' }}">
+    <div class="status-icon">{{ '✓' if stripe_ok else '✗' }}</div>
+    <div class="status-label">Stripe</div>
+  </div>
+  <div class="status-card {{ 'ok' if sheets_ok else 'error' }}">
+    <div class="status-icon">{{ '✓' if sheets_ok else '✗' }}</div>
+    <div class="status-label">Google Sheets</div>
+  </div>
+  <div class="status-card {{ 'ok' if bank_ok else 'error' }}">
+    <div class="status-icon">{{ '✓' if bank_ok else '✗' }}</div>
+    <div class="status-label">Bank Account</div>
+  </div>
+</div>
+
+<!-- Connect Bank (shown only if bank not linked) -->
+{% if not bank_ok %}
+<div class="connect-banner">
+  <div>
+    <strong>Connect your bank account</strong>
+    <p>Link a bank account via Stripe to start syncing transactions.</p>
+  </div>
+  <button id="connect-btn" class="btn btn-primary">
+    Connect Bank Account
+  </button>
+</div>
+{% endif %}
+
+<!-- Sync Controls -->
+<div class="card">
+  <div class="sync-row">
+    <div class="sync-meta">
+      <strong>Transaction Sync</strong>
+      {% if last_sync %}
+        <p>Last synced: <strong>{{ last_sync.timestamp | replace("T", " ") }}</strong>
+          {% if last_sync.status == "success" %}
+            — {{ last_sync.count }} transactions
+            {% if last_sync.url %}
+              · <a class="sheet-link" href="{{ last_sync.url }}" target="_blank">Open Sheet →</a>
+            {% endif %}
+          {% else %}
+            — <span style="color:var(--danger)">Error: {{ last_sync.error }}</span>
+          {% endif %}
+        </p>
+      {% else %}
+        <p>No syncs yet.</p>
+      {% endif %}
+      {% if next_run %}
+        <p style="margin-top:6px">
+          <span class="next-run">Next auto-sync: {{ next_run.strftime("%a %b %d at %I:%M %p %Z") }}</span>
+        </p>
+      {% endif %}
+    </div>
+    <button id="sync-btn" class="btn btn-success" {{ 'disabled' if not bank_ok }}>
+      <span class="spinner" id="spinner"></span>
+      <span id="sync-label">Sync Now</span>
+    </button>
+  </div>
+</div>
+
+<!-- Sync History -->
+<div class="card">
+  <h2>Sync History</h2>
+  {% if history %}
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Status</th>
+        <th>Transactions</th>
+        <th>Trigger</th>
+        <th>Spreadsheet</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for entry in history %}
+      <tr>
+        <td>{{ entry.timestamp | replace("T", " ") }}</td>
+        <td>
+          <span class="badge {{ 'badge-success' if entry.status == 'success' else 'badge-error' }}">
+            {{ entry.status }}
+          </span>
+        </td>
+        <td>
+          {% if entry.status == "success" %}{{ entry.count }}{% else %}<span style="color:var(--muted)">—</span>{% endif %}
+        </td>
+        <td>
+          <span class="badge {{ 'badge-manual' if entry.trigger == 'manual' else 'badge-scheduled' }}">
+            {{ entry.trigger }}
+          </span>
+        </td>
+        <td>
+          {% if entry.url %}
+            <a class="sheet-link" href="{{ entry.url }}" target="_blank">Open →</a>
+          {% elif entry.error %}
+            <span style="color:var(--danger); font-size:0.82rem">{{ entry.error[:60] }}{% if entry.error|length > 60 %}…{% endif %}</span>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p style="color:var(--muted); font-size:0.9rem">No sync history yet. Click <strong>Sync Now</strong> to run your first sync.</p>
+  {% endif %}
+</div>
+
+<!-- Alert area -->
+<div id="alert-area"></div>
+
+<script src="https://js.stripe.com/v3/"></script>
+<script>
+  const stripe = Stripe("{{ stripe_publishable_key }}");
+
+  function showAlert(msg, type) {
+    const el = document.getElementById("alert-area");
+    el.innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+    el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  // Bank connect
+  const connectBtn = document.getElementById("connect-btn");
+  if (connectBtn) {
+    connectBtn.addEventListener("click", async () => {
+      connectBtn.disabled = true;
+      connectBtn.textContent = "Opening…";
+      try {
+        const res = await fetch("/create-fc-session", { method: "POST" });
+        const { client_secret } = await res.json();
+        const { financialConnectionsSession, error } =
+          await stripe.collectFinancialConnectionsAccounts({ clientSecret: client_secret });
+        if (error) throw new Error(error.message);
+        const accounts = financialConnectionsSession.accounts;
+        if (!accounts?.length) throw new Error("No accounts were linked.");
+        await fetch("/save-account", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ account_id: accounts[0].id }),
+        });
+        showAlert("Bank account linked! The page will reload.", "success");
+        setTimeout(() => location.reload(), 1500);
+      } catch (err) {
+        showAlert("Error: " + err.message, "error");
+        connectBtn.disabled = false;
+        connectBtn.textContent = "Connect Bank Account";
+      }
+    });
+  }
+
+  // Manual sync
+  const syncBtn   = document.getElementById("sync-btn");
+  const syncLabel = document.getElementById("sync-label");
+  const spinner   = document.getElementById("spinner");
+
+  if (syncBtn) {
+    syncBtn.addEventListener("click", async () => {
+      syncBtn.disabled = true;
+      spinner.style.display = "block";
+      syncLabel.textContent = "Syncing…";
+      showAlert("Fetching transactions and writing to Google Sheets…", "info");
+      try {
+        const res  = await fetch("/sync", { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Sync failed");
+        showAlert(
+          `${data.message}${data.url ? ` &nbsp;<a class="sheet-link" href="${data.url}" target="_blank">Open Sheet →</a>` : ""}`,
+          "success"
+        );
+        setTimeout(() => location.reload(), 2000);
+      } catch (err) {
+        showAlert("Error: " + err.message, "error");
+      } finally {
+        syncBtn.disabled = false;
+        spinner.style.display = "none";
+        syncLabel.textContent = "Sync Now";
+      }
+    });
+  }
+</script>
+{% endblock %}

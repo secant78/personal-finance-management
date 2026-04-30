@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% set setup_complete = false %}
+
+{% block title %}{{ "Update Credentials" if updating else "Setup" }} — Personal Finance{% endblock %}
+
+{% block content %}
+<div class="setup-wrap">
+  <h1>{{ "Update Credentials" if updating else "Welcome" }}</h1>
+  <p class="subtitle">
+    {{ "Update your credentials below. All values are encrypted and stored in AWS Parameter Store." if updating else "Enter your credentials to get started. Everything is encrypted and stored in AWS Parameter Store — nothing is saved in your code." }}
+  </p>
+
+  {% if error %}
+    <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+
+  <form method="POST" action="/setup" enctype="multipart/form-data">
+
+    <!-- AWS -->
+    <div class="card">
+      <div class="form-section">
+        <h3>① AWS Credentials</h3>
+        <div class="form-group">
+          <label>Access Key ID</label>
+          <input name="aws_access_key_id" placeholder="AKIAIOSFODNN7EXAMPLE" required />
+        </div>
+        <div class="form-group">
+          <label>Secret Access Key</label>
+          <input name="aws_secret_access_key" type="password" placeholder="••••••••••••••••••••" required />
+        </div>
+        <div class="form-group">
+          <label>Region</label>
+          <input name="aws_region" value="us-east-1" required />
+          <p class="form-hint">Used to store all other secrets in Parameter Store.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stripe -->
+    <div class="card">
+      <div class="form-section">
+        <h3>② Stripe Credentials</h3>
+        <div class="form-group">
+          <label>Secret Key</label>
+          <input name="stripe_secret_key" type="password" placeholder="sk_test_..." required />
+        </div>
+        <div class="form-group">
+          <label>Publishable Key</label>
+          <input name="stripe_publishable_key" placeholder="pk_test_..." required />
+          <p class="form-hint">Financial Connections must be enabled in your Stripe dashboard under Settings → Financial Connections.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Google Sheets -->
+    <div class="card">
+      <div class="form-section">
+        <h3>③ Google Sheets</h3>
+        <div class="form-group">
+          <label>Service Account JSON</label>
+          <input type="file" name="service_account_json" accept=".json" required />
+          <p class="form-hint">Download from Google Cloud Console → IAM → Service Accounts → Keys. Share your spreadsheet with the service account email.</p>
+        </div>
+        <div class="form-group">
+          <label>Spreadsheet ID</label>
+          <input name="google_spreadsheet_id" placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms" required />
+          <p class="form-hint">The long string in your Google Sheet URL: /spreadsheets/d/<strong>THIS_PART</strong>/edit</p>
+        </div>
+      </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-full">
+      {{ "Update Credentials" if updating else "Save & Connect" }} →
+    </button>
+
+  </form>
+</div>
+{% endblock %}

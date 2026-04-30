@@ -1,16 +1,47 @@
+import json
+import os
 import boto3
-from functools import lru_cache
 
-_ssm = None
+BOOTSTRAP_FILE = os.path.join(os.path.dirname(__file__), "bootstrap.json")
+_cache: dict = {}
 
-def _client():
-    global _ssm
-    if _ssm is None:
-        _ssm = boto3.client("ssm", region_name="us-east-1")
-    return _ssm
 
-@lru_cache(maxsize=None)
+def is_setup_complete() -> bool:
+    return os.path.exists(BOOTSTRAP_FILE)
+
+
+def save_bootstrap(aws_access_key_id: str, aws_secret_access_key: str, aws_region: str):
+    with open(BOOTSTRAP_FILE, "w") as f:
+        json.dump({
+            "aws_access_key_id": aws_access_key_id,
+            "aws_secret_access_key": aws_secret_access_key,
+            "aws_region": aws_region,
+        }, f)
+    _cache.clear()
+
+
+def _session() -> boto3.Session:
+    with open(BOOTSTRAP_FILE) as f:
+        data = json.load(f)
+    return boto3.Session(
+        aws_access_key_id=data["aws_access_key_id"],
+        aws_secret_access_key=data["aws_secret_access_key"],
+        region_name=data.get("aws_region", "us-east-1"),
+    )
+
+
 def get(name: str) -> str:
-    """Fetch a SecureString parameter from AWS Parameter Store (cached per process)."""
-    response = _client().get_parameter(Name=name, WithDecryption=True)
-    return response["Parameter"]["Value"]
+    if name not in _cache:
+        ssm = _session().client("ssm")
+        _cache[name] = ssm.get_parameter(Name=name, WithDecryption=True)["Parameter"]["Value"]
+    return _cache[name]
+
+
+def put(name: str, value: str):
+    ssm = _session().client("ssm")
+    ssm.put_parameter(Name=name, Value=value, Type="SecureString", Overwrite=True)
+    _cache[name] = value
+
+
+def clear_cache():
+    _cache.clear()

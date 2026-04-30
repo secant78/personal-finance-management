@@ -1,30 +1,157 @@
-import boto3
-import stripe
-from flask import Flask, render_template, request, jsonify
+import json
+import os
+import datetime
+from flask import Flask, render_template, request, jsonify, redirect, url_for
+from apscheduler.schedulers.background import BackgroundScheduler
 import config
-from sheets import write_transactions_to_sheet
+import sync as sync_module
 
 app = Flask(__name__)
-stripe.api_key = config.get("/stripe-bank-sync/stripe-secret-key")
+app.secret_key = os.urandom(24)
+
+SYNC_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "sync_history.json")
 
 
-def _save_account_id(account_id: str):
-    boto3.client("ssm", region_name="us-east-1").put_parameter(
-        Name="/stripe-bank-sync/linked-account-id",
-        Value=account_id,
-        Type="String",
-        Overwrite=True,
-    )
+# ---------------------------------------------------------------------------
+# Sync history helpers
+# ---------------------------------------------------------------------------
 
+def _load_history() -> list:
+    if os.path.exists(SYNC_HISTORY_FILE):
+        with open(SYNC_HISTORY_FILE) as f:
+            return json.load(f)
+    return []
+
+
+def _append_history(entry: dict):
+    history = _load_history()
+    history.insert(0, entry)
+    with open(SYNC_HISTORY_FILE, "w") as f:
+        json.dump(history[:50], f, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Scheduled job
+# ---------------------------------------------------------------------------
+
+def _scheduled_sync():
+    if not config.is_setup_complete():
+        return
+    try:
+        result = sync_module.run_sync()
+        _append_history({
+            "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
+            "status": "success",
+            "count": result["count"],
+            "url": result["url"],
+            "trigger": "scheduled",
+        })
+    except Exception as exc:
+        _append_history({
+            "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
+            "status": "error",
+            "error": str(exc),
+            "trigger": "scheduled",
+        })
+
+
+scheduler = BackgroundScheduler(daemon=True)
+scheduler.add_job(_scheduled_sync, "cron", day_of_week="mon", hour=8, id="weekly_sync")
+scheduler.start()
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
 
 @app.route("/")
 def index():
-    return render_template("index.html", stripe_publishable_key=config.get("/stripe-bank-sync/stripe-publishable-key"))
+    return redirect(url_for("dashboard") if config.is_setup_complete() else url_for("setup"))
 
 
-@app.route("/create-session", methods=["POST"])
-def create_session():
-    """Create a Financial Connections session and return the client secret."""
+@app.route("/setup", methods=["GET"])
+def setup():
+    return render_template("setup.html", updating=False)
+
+
+@app.route("/setup", methods=["POST"])
+def setup_post():
+    aws_key    = request.form.get("aws_access_key_id", "").strip()
+    aws_secret = request.form.get("aws_secret_access_key", "").strip()
+    aws_region = request.form.get("aws_region", "us-east-1").strip()
+    stripe_secret = request.form.get("stripe_secret_key", "").strip()
+    stripe_pub    = request.form.get("stripe_publishable_key", "").strip()
+    spreadsheet_id = request.form.get("google_spreadsheet_id", "").strip()
+    sa_file = request.files.get("service_account_json")
+
+    if not all([aws_key, aws_secret, stripe_secret, stripe_pub, spreadsheet_id, sa_file and sa_file.filename]):
+        return render_template("setup.html", updating=False, error="All fields are required.")
+
+    try:
+        sa_json = sa_file.read().decode("utf-8")
+        json.loads(sa_json)
+    except Exception:
+        return render_template("setup.html", updating=False, error="Service account file is not valid JSON.")
+
+    try:
+        config.save_bootstrap(aws_key, aws_secret, aws_region)
+        config.put("/stripe-bank-sync/stripe-secret-key",          stripe_secret)
+        config.put("/stripe-bank-sync/stripe-publishable-key",     stripe_pub)
+        config.put("/stripe-bank-sync/google-spreadsheet-id",      spreadsheet_id)
+        config.put("/stripe-bank-sync/google-service-account-json", sa_json)
+    except Exception as exc:
+        return render_template("setup.html", updating=False, error=f"Could not save credentials: {exc}")
+
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/settings", methods=["GET"])
+def settings():
+    return render_template("setup.html", updating=True)
+
+
+@app.route("/dashboard")
+def dashboard():
+    if not config.is_setup_complete():
+        return redirect(url_for("setup"))
+
+    stripe_pub = None
+    account_id = None
+    aws_ok = stripe_ok = sheets_ok = bank_ok = False
+
+    try:
+        aws_ok = True  # bootstrap.json exists (checked above)
+        stripe_pub = config.get("/stripe-bank-sync/stripe-publishable-key")
+        config.get("/stripe-bank-sync/stripe-secret-key")
+        stripe_ok = True
+        config.get("/stripe-bank-sync/google-service-account-json")
+        config.get("/stripe-bank-sync/google-spreadsheet-id")
+        sheets_ok = True
+        account_id = config.get("/stripe-bank-sync/linked-account-id")
+        bank_ok = True
+    except Exception:
+        pass
+
+    history = _load_history()
+
+    return render_template(
+        "dashboard.html",
+        stripe_publishable_key=stripe_pub,
+        account_id=account_id,
+        history=history[:10],
+        last_sync=history[0] if history else None,
+        aws_ok=aws_ok,
+        stripe_ok=stripe_ok,
+        sheets_ok=sheets_ok,
+        bank_ok=bank_ok,
+        next_run=scheduler.get_job("weekly_sync").next_run_time,
+    )
+
+
+@app.route("/create-fc-session", methods=["POST"])
+def create_fc_session():
+    import stripe
+    stripe.api_key = config.get("/stripe-bank-sync/stripe-secret-key")
     session = stripe.financial_connections.Session.create(
         account_holder={"type": "individual"},
         permissions=["transactions", "balances", "ownership"],
@@ -32,45 +159,31 @@ def create_session():
     return jsonify({"client_secret": session.client_secret})
 
 
-@app.route("/sync", methods=["POST"])
-def sync():
-    """Fetch transactions for all linked accounts and write them to Google Sheets."""
+@app.route("/save-account", methods=["POST"])
+def save_account():
     data = request.get_json()
     account_id = data.get("account_id")
-
     if not account_id:
-        return jsonify({"error": "account_id is required"}), 400
+        return jsonify({"error": "account_id required"}), 400
+    config.put("/stripe-bank-sync/linked-account-id", account_id)
+    return jsonify({"ok": True})
 
-    _save_account_id(account_id)
 
-    # Refresh transactions so we get the latest data
-    stripe.financial_connections.Account.refresh_account(
-        account_id,
-        features=["transactions"],
-    )
-
-    # Paginate through all transactions
-    transactions = []
-    has_more = True
-    starting_after = None
-
-    while has_more:
-        params = {"account": account_id, "limit": 100}
-        if starting_after:
-            params["starting_after"] = starting_after
-
-        page = stripe.financial_connections.Transaction.list(**params)
-        transactions.extend(page.data)
-        has_more = page.has_more
-        if has_more:
-            starting_after = page.data[-1].id
-
-    if not transactions:
-        return jsonify({"message": "No transactions found.", "count": 0})
-
-    spreadsheet_url = write_transactions_to_sheet(transactions, account_id)
-    return jsonify({"message": f"Synced {len(transactions)} transactions.", "count": len(transactions), "spreadsheet_url": spreadsheet_url})
+@app.route("/sync", methods=["POST"])
+def sync():
+    try:
+        result = sync_module.run_sync()
+        _append_history({
+            "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
+            "status": "success",
+            "count": result["count"],
+            "url": result["url"],
+            "trigger": "manual",
+        })
+        return jsonify(result)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(port=5000, debug=False)
