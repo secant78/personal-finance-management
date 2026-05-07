@@ -6,9 +6,9 @@
 
 <!-- Status Cards -->
 <div class="status-grid">
-  <div class="status-card {{ 'ok' if aws_ok else 'error' }}">
-    <div class="status-icon">{{ '✓' if aws_ok else '✗' }}</div>
-    <div class="status-label">AWS</div>
+  <div class="status-card {{ 'ok' if vault_ok else 'error' }}">
+    <div class="status-icon">{{ '✓' if vault_ok else '✗' }}</div>
+    <div class="status-label">Vaultwarden</div>
   </div>
   <div class="status-card {{ 'ok' if stripe_ok else 'error' }}">
     <div class="status-icon">{{ '✓' if stripe_ok else '✗' }}</div>

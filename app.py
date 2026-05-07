@@ -76,15 +76,17 @@ def setup():
 
 @app.route("/setup", methods=["POST"])
 def setup_post():
-    aws_key    = request.form.get("aws_access_key_id", "").strip()
-    aws_secret = request.form.get("aws_secret_access_key", "").strip()
-    aws_region = request.form.get("aws_region", "us-east-1").strip()
-    stripe_secret = request.form.get("stripe_secret_key", "").strip()
-    stripe_pub    = request.form.get("stripe_publishable_key", "").strip()
-    spreadsheet_id = request.form.get("google_spreadsheet_id", "").strip()
+    vaultwarden_url  = request.form.get("vaultwarden_url", "").strip()
+    bw_client_id     = request.form.get("bw_client_id", "").strip()
+    bw_client_secret = request.form.get("bw_client_secret", "").strip()
+    bw_password      = request.form.get("bw_password", "").strip()
+    stripe_secret    = request.form.get("stripe_secret_key", "").strip()
+    stripe_pub       = request.form.get("stripe_publishable_key", "").strip()
+    spreadsheet_id   = request.form.get("google_spreadsheet_id", "").strip()
     sa_file = request.files.get("service_account_json")
 
-    if not all([aws_key, aws_secret, stripe_secret, stripe_pub, spreadsheet_id, sa_file and sa_file.filename]):
+    if not all([vaultwarden_url, bw_client_id, bw_client_secret, bw_password,
+                stripe_secret, stripe_pub, spreadsheet_id, sa_file and sa_file.filename]):
         return render_template("setup.html", updating=False, error="All fields are required.")
 
     try:
@@ -94,7 +96,7 @@ def setup_post():
         return render_template("setup.html", updating=False, error="Service account file is not valid JSON.")
 
     try:
-        config.save_bootstrap(aws_key, aws_secret, aws_region)
+        config.save_bootstrap(vaultwarden_url, bw_client_id, bw_client_secret, bw_password)
         config.put("/stripe-bank-sync/stripe-secret-key",          stripe_secret)
         config.put("/stripe-bank-sync/stripe-publishable-key",     stripe_pub)
         config.put("/stripe-bank-sync/google-spreadsheet-id",      spreadsheet_id)
@@ -117,10 +119,10 @@ def dashboard():
 
     stripe_pub = None
     account_id = None
-    aws_ok = stripe_ok = sheets_ok = bank_ok = False
+    vault_ok = stripe_ok = sheets_ok = bank_ok = False
 
     try:
-        aws_ok = True  # bootstrap.json exists (checked above)
+        vault_ok = True  # bootstrap.json exists (checked above)
         stripe_pub = config.get("/stripe-bank-sync/stripe-publishable-key")
         config.get("/stripe-bank-sync/stripe-secret-key")
         stripe_ok = True
@@ -140,7 +142,7 @@ def dashboard():
         account_id=account_id,
         history=history[:10],
         last_sync=history[0] if history else None,
-        aws_ok=aws_ok,
+        vault_ok=vault_ok,
         stripe_ok=stripe_ok,
         sheets_ok=sheets_ok,
         bank_ok=bank_ok,

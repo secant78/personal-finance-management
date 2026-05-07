@@ -7,7 +7,7 @@
 <div class="setup-wrap">
   <h1>{{ "Update Credentials" if updating else "Welcome" }}</h1>
   <p class="subtitle">
-    {{ "Update your credentials below. All values are encrypted and stored in AWS Parameter Store." if updating else "Enter your credentials to get started. Everything is encrypted and stored in AWS Parameter Store — nothing is saved in your code." }}
+    {{ "Update your credentials below. All values are encrypted and stored in Vaultwarden." if updating else "Enter your credentials to get started. Everything is encrypted and stored in Vaultwarden — nothing is saved in your code." }}
   </p>
 
   {% if error %}
@@ -16,22 +16,28 @@
 
   <form method="POST" action="/setup" enctype="multipart/form-data">
 
-    <!-- AWS -->
+    <!-- Vaultwarden -->
     <div class="card">
       <div class="form-section">
-        <h3>① AWS Credentials</h3>
+        <h3>① Vaultwarden</h3>
         <div class="form-group">
-          <label>Access Key ID</label>
-          <input name="aws_access_key_id" placeholder="AKIAIOSFODNN7EXAMPLE" required />
+          <label>Server URL</label>
+          <input name="vaultwarden_url" placeholder="https://vault.example.com" required />
+          <p class="form-hint">The base URL of your Vaultwarden instance.</p>
         </div>
         <div class="form-group">
-          <label>Secret Access Key</label>
-          <input name="aws_secret_access_key" type="password" placeholder="••••••••••••••••••••" required />
+          <label>API Key Client ID</label>
+          <input name="bw_client_id" placeholder="user.xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required />
         </div>
         <div class="form-group">
-          <label>Region</label>
-          <input name="aws_region" value="us-east-1" required />
-          <p class="form-hint">Used to store all other secrets in Parameter Store.</p>
+          <label>API Key Client Secret</label>
+          <input name="bw_client_secret" type="password" placeholder="••••••••••••••••••••" required />
+          <p class="form-hint">Generate an API key under Account Settings → Security → API Key in your Vaultwarden web vault.</p>
+        </div>
+        <div class="form-group">
+          <label>Master Password</label>
+          <input name="bw_password" type="password" placeholder="••••••••••••••••••••" required />
+          <p class="form-hint">Used to unlock the vault. Stored locally in bootstrap.json.</p>
         </div>
       </div>
     </div>
