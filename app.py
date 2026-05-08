@@ -154,8 +154,17 @@ def dashboard():
 def create_fc_session():
     import stripe
     stripe.api_key = config.get("/stripe-bank-sync/stripe-secret-key")
+
+    # Reuse existing customer or create one for this personal account
+    try:
+        customer_id = config.get("/stripe-bank-sync/stripe-customer-id")
+    except KeyError:
+        customer = stripe.Customer.create(name="Personal Finance")
+        customer_id = customer.id
+        config.put("/stripe-bank-sync/stripe-customer-id", customer_id)
+
     session = stripe.financial_connections.Session.create(
-        account_holder={"type": "individual"},
+        account_holder={"type": "customer", "customer": customer_id},
         permissions=["transactions", "balances", "ownership"],
     )
     return jsonify({"client_secret": session.client_secret})
@@ -184,7 +193,9 @@ def sync():
         })
         return jsonify(result)
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        import traceback
+        app.logger.error("Sync failed: %s", traceback.format_exc())
+        return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 500
 
 
 if __name__ == "__main__":

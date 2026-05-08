@@ -40,16 +40,39 @@ def _get_session() -> str:
         "BW_PASSWORD": data["bw_password"],
     }
 
-    subprocess.run(
-        ["bw", "config", "server", data["vaultwarden_url"]],
-        capture_output=True, env=env, check=True,
+    url = data["vaultwarden_url"].rstrip("/")
+    if url in ("https://bitwarden.com", "https://vault.bitwarden.com", "bitwarden.com", ""):
+        # Reset to hosted Bitwarden defaults (correct API subdomain routing)
+        subprocess.run(["bw", "config", "server", "bitwarden.com"],
+                       capture_output=True, env=env)
+    else:
+        subprocess.run(["bw", "config", "server", url],
+                       capture_output=True, env=env, check=True)
+
+    # Check current login status
+    status_result = subprocess.run(
+        ["bw", "status"], capture_output=True, text=True, env=env
     )
-    # Login with API key — ignore error if already logged in
-    subprocess.run(["bw", "login", "--apikey"], capture_output=True, env=env)
+    try:
+        status = json.loads(status_result.stdout).get("status", "unauthenticated")
+    except Exception:
+        status = "unauthenticated"
+
+    if status == "unauthenticated":
+        login_result = subprocess.run(
+            ["bw", "login", "--apikey"],
+            capture_output=True, text=True, env=env,
+        )
+        if login_result.returncode != 0:
+            raise RuntimeError(f"Bitwarden login failed: {login_result.stderr.strip() or login_result.stdout.strip()}")
+
     result = subprocess.run(
         ["bw", "unlock", "--passwordenv", "BW_PASSWORD", "--raw"],
-        capture_output=True, text=True, env=env, check=True,
+        capture_output=True, text=True, env=env,
     )
+    if result.returncode != 0:
+        raise RuntimeError(f"Bitwarden unlock failed: {result.stderr.strip() or result.stdout.strip()}")
+
     _session_key = result.stdout.strip()
     return _session_key
 

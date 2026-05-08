@@ -39,7 +39,7 @@ def write_transactions_to_sheet(transactions: list, account_id: str) -> str:
             amount,
             txn.currency.upper(),
             txn.status,
-            ", ".join(txn.get("category", []) or []),
+            ", ".join(getattr(txn, "category", None) or []),
         ])
 
     sid = _spreadsheet_id()
