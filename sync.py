@@ -33,6 +33,15 @@ def _fetch_transactions(account_id: str) -> list:
     return transactions
 
 
+def _get_account_type(account_id: str, fallback: str = "") -> str:
+    """Fetch the subcategory (credit_card, checking, savings) from Stripe."""
+    try:
+        acct = stripe.financial_connections.Account.retrieve(account_id)
+        return acct.subcategory or fallback
+    except Exception:
+        return fallback
+
+
 def run_sync_all(account_ids: list = None, labels: dict = None, account_types: dict = None) -> dict:
     stripe.api_key = config.get("/stripe-bank-sync/stripe-secret-key")
     labels = labels or {}
@@ -47,7 +56,8 @@ def run_sync_all(account_ids: list = None, labels: dict = None, account_types: d
 
     for account_id in account_ids:
         card_label = labels.get(account_id, account_id)
-        account_type = account_types.get(account_id, "")
+        # Always fetch live from Stripe; fall back to stored value
+        account_type = _get_account_type(account_id, fallback=account_types.get(account_id, ""))
         txns = _fetch_transactions(account_id)
         if txns:
             url = write_transactions_to_sheet(txns, account_id, card_label=card_label, account_type=account_type)
