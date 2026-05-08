@@ -6,5 +6,8 @@ ignore = [
   "E501",  # line too long — handled by formatter preference
 ]
 
+[lint.isort]
+known-first-party = ["config", "sync", "sheets", "categorize"]
+
 [lint.per-file-ignores]
-"sync_job.py" = ["F401"]  # legacy entry point, imports may look unused
+"sync_job.py" = ["F401"]

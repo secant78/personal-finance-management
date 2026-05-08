@@ -1,6 +1,6 @@
-import config
 import stripe
 
+import config
 from sheets import write_master_sheet, write_transactions_to_sheet
 
 
