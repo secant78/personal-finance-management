@@ -1,0 +1,10 @@
+line-length = 120
+
+[lint]
+select = ["E", "F", "W", "I"]
+ignore = [
+  "E501",  # line too long — handled by formatter preference
+]
+
+[lint.per-file-ignores]
+"sync_job.py" = ["F401"]  # legacy entry point, imports may look unused
