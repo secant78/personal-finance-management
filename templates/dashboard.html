@@ -53,6 +53,17 @@
   {% endfor %}
 </div>
 
+<!-- Account Balances -->
+<div class="card" style="margin-bottom:1rem">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <strong>Account Balances</strong>
+    <button id="balances-btn" class="btn btn-primary" style="font-size:0.85rem;padding:6px 14px" {{ 'disabled' if not bank_ok }}>
+      Refresh Balances
+    </button>
+  </div>
+  <div id="balances-area" style="margin-top:0.75rem"></div>
+</div>
+
 <!-- Sync Controls -->
 <div class="card">
   <div class="sync-row">
@@ -213,6 +224,53 @@
       }
     });
   });
+
+  // Balances
+  const balancesBtn  = document.getElementById("balances-btn");
+  const balancesArea = document.getElementById("balances-area");
+
+  if (balancesBtn) {
+    balancesBtn.addEventListener("click", async () => {
+      balancesBtn.disabled = true;
+      balancesBtn.textContent = "Loading…";
+      balancesArea.innerHTML = "<p style='color:var(--muted);font-size:0.9rem'>Fetching balances from Stripe…</p>";
+      try {
+        const res  = await fetch("/balances");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to fetch balances");
+
+        const fmt = n => "$" + Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+        const rows = data.map(acct => {
+          if (acct.error) {
+            return `<div style="padding:8px 0;border-bottom:1px solid #f3f4f6;color:var(--muted);font-size:0.88rem">
+              <strong>${acct.label}</strong> <span style="font-size:0.8rem">(${acct.institution})</span>
+              — <span style="color:var(--danger)">unavailable</span>
+            </div>`;
+          }
+          const sign  = acct.balance_label === "Balance Owed" ? "-" : "";
+          const color = acct.balance_label === "Balance Owed" ? "var(--danger)" : "#16a34a";
+          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f3f4f6">
+            <div>
+              <span style="font-weight:600">${acct.label}</span>
+              <span style="font-size:0.8rem;color:var(--muted);margin-left:6px">${acct.institution}</span>
+              <span style="font-size:0.78rem;color:var(--muted);margin-left:6px">${acct.balance_label}</span>
+            </div>
+            <div style="font-weight:700;font-size:1rem;color:${color}">${sign}${fmt(acct.amount)}
+              <span style="font-size:0.72rem;font-weight:400;color:var(--muted);margin-left:4px">as of ${acct.as_of || "—"}</span>
+            </div>
+          </div>`;
+        }).join("");
+
+        balancesArea.innerHTML = rows || "<p style='color:var(--muted);font-size:0.9rem'>No balance data available.</p>";
+      } catch (err) {
+        balancesArea.innerHTML = `<p style="color:var(--danger);font-size:0.9rem">Error: ${err.message}</p>`;
+      } finally {
+        balancesBtn.disabled = false;
+        balancesBtn.textContent = "Refresh Balances";
+      }
+    });
+  }
 
   // Manual sync
   const syncBtn   = document.getElementById("sync-btn");

@@ -267,6 +267,44 @@ def delete_institution():
     return jsonify({"ok": True})
 
 
+@app.route("/balances", methods=["GET"])
+def get_balances():
+    import stripe as stripe_lib
+    stripe_lib.api_key = config.get("/stripe-bank-sync/stripe-secret-key")
+    account_ids = _get_account_ids()
+    raw_data = _load_account_data()
+    result = []
+    for account_id in account_ids:
+        val = raw_data.get(account_id, {})
+        label = val["label"] if isinstance(val, dict) else (val or account_id)
+        institution = val.get("institution", "") if isinstance(val, dict) else ""
+        entry = {"id": account_id, "label": label, "institution": institution}
+        try:
+            try:
+                stripe_lib.financial_connections.Account.refresh_account(
+                    account_id, features=["balance"]
+                )
+            except stripe_lib.error.InvalidRequestError:
+                pass
+            acct = stripe_lib.financial_connections.Account.retrieve(account_id)
+            bal = acct.balance
+            if bal:
+                if bal.type == "cash" and bal.cash:
+                    avail = bal.cash.available or {}
+                    entry["amount"] = (avail.get("usd") or 0) / 100
+                    entry["balance_label"] = "Available"
+                elif bal.type == "credit" and bal.credit:
+                    used = bal.credit.used or {}
+                    entry["amount"] = (used.get("usd") or 0) / 100
+                    entry["balance_label"] = "Balance Owed"
+                if bal.as_of:
+                    entry["as_of"] = datetime.datetime.utcfromtimestamp(bal.as_of).strftime("%b %d, %Y")
+        except Exception as exc:
+            entry["error"] = str(exc)
+        result.append(entry)
+    return jsonify(result)
+
+
 @app.route("/sync", methods=["POST"])
 def sync():
     try:
