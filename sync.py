@@ -24,7 +24,12 @@ def _fetch_transactions(account_id: str) -> list:
         params = {"account": account_id, "limit": 100}
         if starting_after:
             params["starting_after"] = starting_after
-        page = stripe.financial_connections.Transaction.list(**params)
+        try:
+            page = stripe.financial_connections.Transaction.list(**params)
+        except stripe.error.InvalidRequestError as e:
+            if "refresh is still pending" in str(e):
+                break  # Return whatever we have so far
+            raise
         transactions.extend(page.data)
         has_more = page.has_more
         if has_more:
