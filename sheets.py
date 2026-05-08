@@ -3,6 +3,7 @@ import datetime
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 import config
+from categorize import categorize
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
@@ -17,29 +18,30 @@ def _spreadsheet_id() -> str:
     return config.get("/stripe-bank-sync/google-spreadsheet-id")
 
 
-def write_transactions_to_sheet(transactions: list, account_id: str) -> str:
+def write_transactions_to_sheet(transactions: list, account_id: str, card_label: str = "") -> str:
     service = _get_service()
     sheet = service.spreadsheets()
 
-    # Use a tab named after the account id, create it if it doesn't exist
-    tab_name = account_id[:31]  # Sheet tab names are limited to 31 chars
+    # Use a tab named after the card label or account id
+    tab_name = (card_label or account_id)[:31]
     _ensure_tab(service, tab_name)
 
-    header = ["Transaction ID", "Date", "Description", "Amount", "Currency", "Status", "Category"]
+    header = ["Transaction ID", "Date", "Description", "Amount", "Currency", "Status", "Category", "Card"]
     rows = [header]
 
     for txn in transactions:
         date = datetime.datetime.utcfromtimestamp(txn.transacted_at).strftime("%Y-%m-%d") if txn.transacted_at else ""
-        # amount is in cents; negative = debit, positive = credit
         amount = txn.amount / 100
+        description = txn.description or ""
         rows.append([
             txn.id,
             date,
-            txn.description or "",
+            description,
             amount,
             txn.currency.upper(),
             txn.status,
-            ", ".join(getattr(txn, "category", None) or []),
+            categorize(description),
+            card_label or account_id,
         ])
 
     sid = _spreadsheet_id()

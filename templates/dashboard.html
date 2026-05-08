@@ -24,18 +24,26 @@
   </div>
 </div>
 
-<!-- Connect Bank (shown only if bank not linked) -->
-{% if not bank_ok %}
-<div class="connect-banner">
-  <div>
-    <strong>Connect your bank account</strong>
-    <p>Link a bank account via Stripe to start syncing transactions.</p>
+<!-- Connected Cards -->
+<div class="card" style="margin-bottom:1rem">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:{% if accounts %}1rem{% else %}0{% endif %}">
+    <strong>Connected Cards</strong>
+    <button id="connect-btn" class="btn btn-primary" style="font-size:0.85rem;padding:6px 14px">
+      + Add Card
+    </button>
   </div>
-  <button id="connect-btn" class="btn btn-primary">
-    Connect Bank Account
-  </button>
+  {% if not accounts %}
+    <p style="color:var(--muted);font-size:0.9rem">No cards connected yet. Click <strong>+ Add Card</strong> to link a bank account.</p>
+  {% endif %}
+  {% for acct in accounts %}
+  <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+    <input class="label-input" data-id="{{ acct.id }}" value="{{ acct.label }}"
+           placeholder="e.g. Chase Sapphire"
+           style="flex:1;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9rem" />
+    <button class="save-label-btn btn btn-primary" data-id="{{ acct.id }}" style="white-space:nowrap;font-size:0.85rem;padding:6px 14px">Save</button>
+  </div>
+  {% endfor %}
 </div>
-{% endif %}
 
 <!-- Sync Controls -->
 <div class="card">
@@ -143,20 +151,44 @@
         if (error) throw new Error(error.message);
         const accounts = financialConnectionsSession.accounts;
         if (!accounts?.length) throw new Error("No accounts were linked.");
+
+        // Prompt for a label for each connected account
+        const labels = {};
+        for (const acct of accounts) {
+          const hint = acct.display_name || (acct.institution_name ? `${acct.institution_name} ••${acct.last4 || ""}` : acct.id);
+          const label = prompt(`Name this card (${hint}):`, "") || "";
+          labels[acct.id] = label;
+        }
         await fetch("/save-account", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ account_id: accounts[0].id }),
+          body: JSON.stringify({ account_ids: accounts.map(a => a.id), labels }),
         });
-        showAlert("Bank account linked! The page will reload.", "success");
+        showAlert("Card(s) linked! The page will reload.", "success");
         setTimeout(() => location.reload(), 1500);
       } catch (err) {
         showAlert("Error: " + err.message, "error");
         connectBtn.disabled = false;
-        connectBtn.textContent = "Connect Bank Account";
+        connectBtn.textContent = "+ Add Card";
       }
     });
   }
+
+  // Save label buttons (one per connected account)
+  document.querySelectorAll(".save-label-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const accountId = btn.dataset.id;
+      const input = document.querySelector(`.label-input[data-id="${accountId}"]`);
+      const label = input.value.trim();
+      if (!label) return;
+      await fetch("/label-account", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account_id: accountId, label }),
+      });
+      showAlert("Card name saved.", "success");
+    });
+  });
 
   // Manual sync
   const syncBtn   = document.getElementById("sync-btn");

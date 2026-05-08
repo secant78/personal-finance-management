@@ -10,6 +10,39 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
 SYNC_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "sync_history.json")
+ACCOUNT_LABELS_FILE = os.path.join(os.path.dirname(__file__), "account_labels.json")
+
+
+def _get_account_labels() -> dict:
+    if os.path.exists(ACCOUNT_LABELS_FILE):
+        with open(ACCOUNT_LABELS_FILE) as f:
+            return json.load(f)
+    return {}
+
+
+def _set_account_label(account_id: str, label: str):
+    labels = _get_account_labels()
+    labels[account_id] = label
+    with open(ACCOUNT_LABELS_FILE, "w") as f:
+        json.dump(labels, f)
+
+
+def _get_account_ids() -> list:
+    try:
+        raw = config.get("/stripe-bank-sync/linked-account-ids")
+        return json.loads(raw)
+    except (KeyError, json.JSONDecodeError):
+        pass
+    # Backward compat: migrate old single-account key
+    try:
+        single = config.get("/stripe-bank-sync/linked-account-id")
+        return [single]
+    except KeyError:
+        return []
+
+
+def _save_account_ids(ids: list):
+    config.put("/stripe-bank-sync/linked-account-ids", json.dumps(ids))
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +71,7 @@ def _scheduled_sync():
     if not config.is_setup_complete():
         return
     try:
-        result = sync_module.run_sync()
+        result = sync_module.run_sync_all(_get_account_ids(), _get_account_labels())
         _append_history({
             "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
             "status": "success",
@@ -118,28 +151,29 @@ def dashboard():
         return redirect(url_for("setup"))
 
     stripe_pub = None
-    account_id = None
-    vault_ok = stripe_ok = sheets_ok = bank_ok = False
+    vault_ok = stripe_ok = sheets_ok = False
 
     try:
-        vault_ok = True  # bootstrap.json exists (checked above)
+        vault_ok = True
         stripe_pub = config.get("/stripe-bank-sync/stripe-publishable-key")
         config.get("/stripe-bank-sync/stripe-secret-key")
         stripe_ok = True
         config.get("/stripe-bank-sync/google-service-account-json")
         config.get("/stripe-bank-sync/google-spreadsheet-id")
         sheets_ok = True
-        account_id = config.get("/stripe-bank-sync/linked-account-id")
-        bank_ok = True
     except Exception:
         pass
 
+    account_ids = _get_account_ids()
+    labels = _get_account_labels()
+    accounts = [{"id": aid, "label": labels.get(aid, "")} for aid in account_ids]
+    bank_ok = len(account_ids) > 0
     history = _load_history()
 
     return render_template(
         "dashboard.html",
         stripe_publishable_key=stripe_pub,
-        account_id=account_id,
+        accounts=accounts,
         history=history[:10],
         last_sync=history[0] if history else None,
         vault_ok=vault_ok,
@@ -173,17 +207,36 @@ def create_fc_session():
 @app.route("/save-account", methods=["POST"])
 def save_account():
     data = request.get_json()
+    new_ids = data.get("account_ids", [])
+    labels = data.get("labels", {})
+    if not new_ids:
+        return jsonify({"error": "account_ids required"}), 400
+    existing = _get_account_ids()
+    for aid in new_ids:
+        if aid not in existing:
+            existing.append(aid)
+    _save_account_ids(existing)
+    for aid, label in labels.items():
+        if label:
+            _set_account_label(aid, label)
+    return jsonify({"ok": True})
+
+
+@app.route("/label-account", methods=["POST"])
+def label_account():
+    data = request.get_json()
     account_id = data.get("account_id")
-    if not account_id:
-        return jsonify({"error": "account_id required"}), 400
-    config.put("/stripe-bank-sync/linked-account-id", account_id)
+    label = data.get("label", "").strip()
+    if not account_id or not label:
+        return jsonify({"error": "account_id and label required"}), 400
+    _set_account_label(account_id, label)
     return jsonify({"ok": True})
 
 
 @app.route("/sync", methods=["POST"])
 def sync():
     try:
-        result = sync_module.run_sync()
+        result = sync_module.run_sync_all(_get_account_ids(), _get_account_labels())
         _append_history({
             "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
             "status": "success",
