@@ -8,3 +8,6 @@ venv/
 sync_job.log
 bootstrap.json
 sync_history.json
+account_labels.json
+vaultwarden-certs/
+*.egg-info/
