@@ -1,8 +1,10 @@
+import datetime
 import json
 import os
-import datetime
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+
 from apscheduler.schedulers.background import BackgroundScheduler
+from flask import Flask, jsonify, redirect, render_template, request, url_for
+
 import config
 import sync as sync_module
 

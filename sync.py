@@ -1,6 +1,7 @@
-import stripe
 import config
-from sheets import write_transactions_to_sheet, write_master_sheet
+import stripe
+
+from sheets import write_master_sheet, write_transactions_to_sheet
 
 
 def _fetch_transactions(account_id: str) -> list:
@@ -61,11 +62,3 @@ def run_sync_all(account_ids: list = None, labels: dict = None) -> dict:
         "message": f"Synced {total_count} transactions across {len(account_ids)} account(s).",
     }
 
-
-# Keep old single-account entry point for backward compat
-def run_sync(account_id: str = None, labels: dict = None) -> dict:
-    stripe.api_key = config.get("/stripe-bank-sync/stripe-secret-key")
-    if not account_id:
-        account_id = config.get("/stripe-bank-sync/linked-account-id")
-    result = _sync_one(account_id, (labels or {}).get(account_id, ""))
-    return {**result, "message": f"Synced {result['count']} transactions."}
