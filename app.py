@@ -222,7 +222,7 @@ def create_fc_session():
     session = stripe.financial_connections.Session.create(
         account_holder={"type": "customer", "customer": customer_id},
         permissions=["transactions", "balances", "ownership"],
-        filters={"account_subcategories": ["credit_card"]},
+        filters={"account_subcategories": ["checking", "savings", "credit_card"]},
     )
     return jsonify({"client_secret": session.client_secret})
 
