@@ -33,25 +33,27 @@ def _fetch_transactions(account_id: str) -> list:
     return transactions
 
 
-def run_sync_all(account_ids: list = None, labels: dict = None) -> dict:
+def run_sync_all(account_ids: list = None, labels: dict = None, account_types: dict = None) -> dict:
     stripe.api_key = config.get("/stripe-bank-sync/stripe-secret-key")
     labels = labels or {}
+    account_types = account_types or {}
 
     if not account_ids:
         account_ids = [config.get("/stripe-bank-sync/linked-account-id")]
 
-    all_transactions = []  # [(txn, card_label), ...]
+    all_transactions = []  # [(txn, card_label, account_type), ...]
     total_count = 0
     last_url = None
 
     for account_id in account_ids:
         card_label = labels.get(account_id, account_id)
+        account_type = account_types.get(account_id, "")
         txns = _fetch_transactions(account_id)
         if txns:
-            url = write_transactions_to_sheet(txns, account_id, card_label=card_label)
+            url = write_transactions_to_sheet(txns, account_id, card_label=card_label, account_type=account_type)
             last_url = url
             total_count += len(txns)
-            all_transactions.extend((t, card_label) for t in txns)
+            all_transactions.extend((t, card_label, account_type) for t in txns)
 
     if all_transactions:
         write_master_sheet(all_transactions)

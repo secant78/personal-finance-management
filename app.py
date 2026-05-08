@@ -29,12 +29,20 @@ def _get_account_labels() -> dict:
     return {aid: (val["label"] if isinstance(val, dict) else val) for aid, val in raw.items()}
 
 
-def _set_account_data(account_id: str, label: str, institution: str = ""):
+def _get_account_types() -> dict:
+    """Returns {account_id: account_type_str}."""
+    raw = _load_account_data()
+    return {aid: (val.get("account_type", "") if isinstance(val, dict) else "") for aid, val in raw.items()}
+
+
+def _set_account_data(account_id: str, label: str, institution: str = "", account_type: str = ""):
     data = _load_account_data()
     existing = data.get(account_id)
     if not label:
         label = existing["label"] if isinstance(existing, dict) else (existing or "")
-    data[account_id] = {"label": label, "institution": institution}
+    if not account_type and isinstance(existing, dict):
+        account_type = existing.get("account_type", "")
+    data[account_id] = {"label": label, "institution": institution, "account_type": account_type}
     with open(ACCOUNT_LABELS_FILE, "w") as f:
         json.dump(data, f)
 
@@ -83,7 +91,7 @@ def _scheduled_sync():
     if not config.is_setup_complete():
         return
     try:
-        result = sync_module.run_sync_all(_get_account_ids(), _get_account_labels())
+        result = sync_module.run_sync_all(_get_account_ids(), _get_account_labels(), _get_account_types())
         _append_history({
             "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
             "status": "success",
@@ -244,7 +252,7 @@ def save_account():
                 existing.append(aid)
         _save_account_ids(existing)
     for a in accts:
-        _set_account_data(a["id"], a.get("label", ""), a.get("institution", ""))
+        _set_account_data(a["id"], a.get("label", ""), a.get("institution", ""), a.get("account_type", ""))
     return jsonify({"ok": True})
 
 
@@ -262,7 +270,7 @@ def delete_institution():
 @app.route("/sync", methods=["POST"])
 def sync():
     try:
-        result = sync_module.run_sync_all(_get_account_ids(), _get_account_labels())
+        result = sync_module.run_sync_all(_get_account_ids(), _get_account_labels(), _get_account_types())
         _append_history({
             "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
             "status": "success",

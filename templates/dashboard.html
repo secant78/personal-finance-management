@@ -170,7 +170,7 @@
             if (a.last4) label += (label ? " ••" : "••") + a.last4;
             if (!label) label = a.id;
           }
-          return { id: a.id, institution: a.institution_name || "Unknown", label };
+          return { id: a.id, institution: a.institution_name || "Unknown", label, account_type: a.subcategory || "" };
         });
 
         await fetch("/save-account", {

@@ -20,7 +20,11 @@ def _spreadsheet_id() -> str:
     return config.get("/stripe-bank-sync/google-spreadsheet-id")
 
 
-def write_transactions_to_sheet(transactions: list, account_id: str, card_label: str = "") -> str:
+def _fmt_account_type(account_type: str) -> str:
+    return {"credit_card": "Credit Card", "checking": "Checking", "savings": "Savings"}.get(account_type, account_type.replace("_", " ").title() if account_type else "")
+
+
+def write_transactions_to_sheet(transactions: list, account_id: str, card_label: str = "", account_type: str = "") -> str:
     service = _get_service()
     sheet = service.spreadsheets()
 
@@ -28,9 +32,10 @@ def write_transactions_to_sheet(transactions: list, account_id: str, card_label:
     tab_name = (card_label or account_id)[:31]
     _ensure_tab(service, tab_name)
 
-    header = ["Transaction ID", "Date", "Description", "Amount", "Currency", "Status", "Category", "Card"]
+    header = ["Transaction ID", "Date", "Description", "Amount", "Currency", "Status", "Category", "Account Type", "Card"]
     rows = [header]
 
+    fmt_type = _fmt_account_type(account_type)
     for txn in transactions:
         date = datetime.datetime.utcfromtimestamp(txn.transacted_at).strftime("%Y-%m-%d") if txn.transacted_at else ""
         amount = txn.amount / 100
@@ -43,6 +48,7 @@ def write_transactions_to_sheet(transactions: list, account_id: str, card_label:
             txn.currency.upper(),
             txn.status,
             categorize(description),
+            fmt_type,
             card_label or account_id,
         ])
 
@@ -75,23 +81,22 @@ def write_transactions_to_sheet(transactions: list, account_id: str, card_label:
 
 
 def write_master_sheet(all_transactions: list) -> None:
-    """Write all transactions from all cards into a single 'Master' tab, sorted by date desc."""
+    """Write all transactions from all accounts into a single 'Master' tab, sorted by date desc."""
     service = _get_service()
     sid = _spreadsheet_id()
     tab_name = "Master"
     _ensure_tab(service, tab_name)
 
-    header = ["Transaction ID", "Date", "Description", "Amount", "Currency", "Status", "Category", "Card"]
+    header = ["Transaction ID", "Date", "Description", "Amount", "Currency", "Status", "Category", "Account Type", "Card"]
     rows = [header]
 
-    # Sort newest first
     sorted_txns = sorted(
         all_transactions,
         key=lambda x: (x[0].transacted_at or 0),
         reverse=True,
     )
 
-    for txn, card_label in sorted_txns:
+    for txn, card_label, account_type in sorted_txns:
         date = datetime.datetime.utcfromtimestamp(txn.transacted_at).strftime("%Y-%m-%d") if txn.transacted_at else ""
         rows.append([
             txn.id,
@@ -101,6 +106,7 @@ def write_master_sheet(all_transactions: list) -> None:
             txn.currency.upper(),
             txn.status,
             categorize(txn.description or ""),
+            _fmt_account_type(account_type),
             card_label,
         ])
 
