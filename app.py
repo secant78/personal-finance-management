@@ -13,18 +13,28 @@ SYNC_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "sync_history.json")
 ACCOUNT_LABELS_FILE = os.path.join(os.path.dirname(__file__), "account_labels.json")
 
 
-def _get_account_labels() -> dict:
+def _load_account_data() -> dict:
+    """Raw storage: {account_id: {label, institution} or legacy str}"""
     if os.path.exists(ACCOUNT_LABELS_FILE):
         with open(ACCOUNT_LABELS_FILE) as f:
             return json.load(f)
     return {}
 
 
-def _set_account_label(account_id: str, label: str):
-    labels = _get_account_labels()
-    labels[account_id] = label
+def _get_account_labels() -> dict:
+    """Returns {account_id: label_str} for use by sync/sheets."""
+    raw = _load_account_data()
+    return {aid: (val["label"] if isinstance(val, dict) else val) for aid, val in raw.items()}
+
+
+def _set_account_data(account_id: str, label: str, institution: str = ""):
+    data = _load_account_data()
+    existing = data.get(account_id)
+    if not label:
+        label = existing["label"] if isinstance(existing, dict) else (existing or "")
+    data[account_id] = {"label": label, "institution": institution}
     with open(ACCOUNT_LABELS_FILE, "w") as f:
-        json.dump(labels, f)
+        json.dump(data, f)
 
 
 def _get_account_ids() -> list:
@@ -165,15 +175,25 @@ def dashboard():
         pass
 
     account_ids = _get_account_ids()
-    labels = _get_account_labels()
-    accounts = [{"id": aid, "label": labels.get(aid, "")} for aid in account_ids]
+    raw_data = _load_account_data()
     bank_ok = len(account_ids) > 0
+
+    from collections import defaultdict
+    inst_map = defaultdict(list)
+    for aid in account_ids:
+        val = raw_data.get(aid, {})
+        inst = val.get("institution", "Unknown") if isinstance(val, dict) else "Unknown"
+        label = val["label"] if isinstance(val, dict) else (val or aid)
+        inst_map[inst].append({"id": aid, "label": label})
+    connected_institutions = [{"name": k, "cards": v} for k, v in inst_map.items()]
+
     history = _load_history()
 
     return render_template(
         "dashboard.html",
         stripe_publishable_key=stripe_pub,
-        accounts=accounts,
+        connected_institutions=connected_institutions,
+        existing_account_ids=account_ids,
         history=history[:10],
         last_sync=history[0] if history else None,
         vault_ok=vault_ok,
@@ -200,6 +220,7 @@ def create_fc_session():
     session = stripe.financial_connections.Session.create(
         account_holder={"type": "customer", "customer": customer_id},
         permissions=["transactions", "balances", "ownership"],
+        filters={"account_subcategories": ["credit_card"]},
     )
     return jsonify({"client_secret": session.client_secret})
 
@@ -207,29 +228,32 @@ def create_fc_session():
 @app.route("/save-account", methods=["POST"])
 def save_account():
     data = request.get_json()
-    new_ids = data.get("account_ids", [])
-    labels = data.get("labels", {})
-    if not new_ids:
-        return jsonify({"error": "account_ids required"}), 400
-    existing = _get_account_ids()
-    for aid in new_ids:
-        if aid not in existing:
-            existing.append(aid)
-    _save_account_ids(existing)
-    for aid, label in labels.items():
-        if label:
-            _set_account_label(aid, label)
+    replace = data.get("replace", False)
+    accts = data.get("accounts", [])  # [{id, institution, label}]
+    if not accts:
+        return jsonify({"error": "accounts required"}), 400
+    new_ids = [a["id"] for a in accts]
+    if replace:
+        _save_account_ids(new_ids)
+    else:
+        existing = _get_account_ids()
+        for aid in new_ids:
+            if aid not in existing:
+                existing.append(aid)
+        _save_account_ids(existing)
+    for a in accts:
+        _set_account_data(a["id"], a.get("label", ""), a.get("institution", ""))
     return jsonify({"ok": True})
 
 
-@app.route("/label-account", methods=["POST"])
-def label_account():
+@app.route("/delete-institution", methods=["POST"])
+def delete_institution():
     data = request.get_json()
-    account_id = data.get("account_id")
-    label = data.get("label", "").strip()
-    if not account_id or not label:
-        return jsonify({"error": "account_id and label required"}), 400
-    _set_account_label(account_id, label)
+    ids_to_remove = set(data.get("account_ids", []))
+    if not ids_to_remove:
+        return jsonify({"error": "account_ids required"}), 400
+    existing = _get_account_ids()
+    _save_account_ids([aid for aid in existing if aid not in ids_to_remove])
     return jsonify({"ok": True})
 
 

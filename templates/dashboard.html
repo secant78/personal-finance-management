@@ -24,23 +24,31 @@
   </div>
 </div>
 
-<!-- Connected Cards -->
+<!-- Connected Accounts -->
 <div class="card" style="margin-bottom:1rem">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:{% if accounts %}1rem{% else %}0{% endif %}">
-    <strong>Connected Cards</strong>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:{% if connected_institutions %}1rem{% else %}0{% endif %}">
+    <strong>Connected Accounts</strong>
     <button id="connect-btn" class="btn btn-primary" style="font-size:0.85rem;padding:6px 14px">
-      + Add Card
+      + Connect Account
     </button>
   </div>
-  {% if not accounts %}
-    <p style="color:var(--muted);font-size:0.9rem">No cards connected yet. Click <strong>+ Add Card</strong> to link a bank account.</p>
+  {% if not connected_institutions %}
+    <p style="color:var(--muted);font-size:0.9rem">No accounts connected yet. Click <strong>+ Connect Account</strong> to link a bank account.</p>
   {% endif %}
-  {% for acct in accounts %}
-  <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
-    <input class="label-input" data-id="{{ acct.id }}" value="{{ acct.label }}"
-           placeholder="e.g. Chase Sapphire"
-           style="flex:1;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9rem" />
-    <button class="save-label-btn btn btn-primary" data-id="{{ acct.id }}" style="white-space:nowrap;font-size:0.85rem;padding:6px 14px">Save</button>
+  {% for inst in connected_institutions %}
+  <div style="display:flex;gap:12px;align-items:center;padding:10px 12px;border:1px solid #e5e7eb;border-radius:8px;margin-top:8px">
+    <div style="flex:1">
+      <div style="font-weight:600;font-size:0.95rem">{{ inst.name }}</div>
+      <div style="font-size:0.82rem;color:var(--muted);margin-top:2px">
+        {{ inst.cards | map(attribute='label') | join(' · ') }}
+      </div>
+    </div>
+    <button class="delete-institution-btn btn"
+            data-institution="{{ inst.name }}"
+            data-ids='{{ inst.cards | map(attribute="id") | list | tojson }}'
+            style="white-space:nowrap;font-size:0.85rem;padding:6px 14px;background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;border-radius:6px;cursor:pointer">
+      Remove
+    </button>
   </div>
   {% endfor %}
 </div>
@@ -137,7 +145,9 @@
     el.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
-  // Bank connect
+  const existingIds = new Set({{ existing_account_ids | tojson }});
+
+  // Connect account
   const connectBtn = document.getElementById("connect-btn");
   if (connectBtn) {
     connectBtn.addEventListener("click", async () => {
@@ -152,41 +162,55 @@
         const accounts = financialConnectionsSession.accounts;
         if (!accounts?.length) throw new Error("No accounts were linked.");
 
-        // Prompt for a label for each connected account
-        const labels = {};
-        for (const acct of accounts) {
-          const hint = acct.display_name || (acct.institution_name ? `${acct.institution_name} ••${acct.last4 || ""}` : acct.id);
-          const label = prompt(`Name this card (${hint}):`, "") || "";
-          labels[acct.id] = label;
-        }
+        // Auto-label each card from Stripe data; preserve label for already-connected cards
+        const acctPayload = accounts.map(a => {
+          let label = "";
+          if (!existingIds.has(a.id)) {
+            label = a.display_name || "";
+            if (a.last4) label += (label ? " ••" : "••") + a.last4;
+            if (!label) label = a.id;
+          }
+          return { id: a.id, institution: a.institution_name || "Unknown", label };
+        });
+
         await fetch("/save-account", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ account_ids: accounts.map(a => a.id), labels }),
+          body: JSON.stringify({ accounts: acctPayload, replace: true }),
         });
-        showAlert("Card(s) linked! The page will reload.", "success");
+
+        const added = accounts.filter(a => !existingIds.has(a.id)).length;
+        showAlert(`${accounts.length} card(s) connected (${added} new). Page will reload.`, "success");
         setTimeout(() => location.reload(), 1500);
       } catch (err) {
         showAlert("Error: " + err.message, "error");
         connectBtn.disabled = false;
-        connectBtn.textContent = "+ Add Card";
+        connectBtn.textContent = "+ Connect Account";
       }
     });
   }
 
-  // Save label buttons (one per connected account)
-  document.querySelectorAll(".save-label-btn").forEach(btn => {
+  // Remove institution buttons
+  document.querySelectorAll(".delete-institution-btn").forEach(btn => {
     btn.addEventListener("click", async () => {
-      const accountId = btn.dataset.id;
-      const input = document.querySelector(`.label-input[data-id="${accountId}"]`);
-      const label = input.value.trim();
-      if (!label) return;
-      await fetch("/label-account", {
+      const institution = btn.dataset.institution;
+      const ids = JSON.parse(btn.dataset.ids);
+      if (!confirm(`Remove ${institution} from this app?\n\nThis only removes it here — it won't affect your bank or Stripe.`)) return;
+      btn.disabled = true;
+      btn.textContent = "Removing…";
+      const res = await fetch("/delete-institution", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ account_id: accountId, label }),
+        body: JSON.stringify({ account_ids: ids }),
       });
-      showAlert("Card name saved.", "success");
+      if (res.ok) {
+        showAlert(`${institution} removed. Page will reload.`, "success");
+        setTimeout(() => location.reload(), 1000);
+      } else {
+        showAlert("Failed to remove account.", "error");
+        btn.disabled = false;
+        btn.textContent = "Remove";
+      }
     });
   });
 

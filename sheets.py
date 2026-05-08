@@ -72,6 +72,59 @@ def write_transactions_to_sheet(transactions: list, account_id: str, card_label:
     return f"https://docs.google.com/spreadsheets/d/{sid}"
 
 
+def write_master_sheet(all_transactions: list) -> None:
+    """Write all transactions from all cards into a single 'Master' tab, sorted by date desc."""
+    service = _get_service()
+    sid = _spreadsheet_id()
+    tab_name = "Master"
+    _ensure_tab(service, tab_name)
+
+    header = ["Transaction ID", "Date", "Description", "Amount", "Currency", "Status", "Category", "Card"]
+    rows = [header]
+
+    # Sort newest first
+    sorted_txns = sorted(
+        all_transactions,
+        key=lambda x: (x[0].transacted_at or 0),
+        reverse=True,
+    )
+
+    for txn, card_label in sorted_txns:
+        date = datetime.datetime.utcfromtimestamp(txn.transacted_at).strftime("%Y-%m-%d") if txn.transacted_at else ""
+        rows.append([
+            txn.id,
+            date,
+            txn.description or "",
+            txn.amount / 100,
+            txn.currency.upper(),
+            txn.status,
+            categorize(txn.description or ""),
+            card_label,
+        ])
+
+    service.spreadsheets().values().update(
+        spreadsheetId=sid,
+        range=f"{tab_name}!A1",
+        valueInputOption="USER_ENTERED",
+        body={"values": rows},
+    ).execute()
+
+    sheet_id = _get_sheet_id(service, tab_name)
+    if sheet_id is not None:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sid,
+            body={
+                "requests": [{
+                    "repeatCell": {
+                        "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1},
+                        "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
+                        "fields": "userEnteredFormat.textFormat.bold",
+                    }
+                }]
+            },
+        ).execute()
+
+
 def _ensure_tab(service, tab_name: str):
     sid = _spreadsheet_id()
     spreadsheet = service.spreadsheets().get(spreadsheetId=sid).execute()

@@ -1,13 +1,19 @@
 import stripe
 import config
-from sheets import write_transactions_to_sheet
+from sheets import write_transactions_to_sheet, write_master_sheet
 
 
-def _sync_one(account_id: str, card_label: str) -> dict:
-    stripe.financial_connections.Account.refresh_account(
-        account_id,
-        features=["transactions"],
-    )
+def _fetch_transactions(account_id: str) -> list:
+    try:
+        stripe.financial_connections.Account.refresh_account(
+            account_id,
+            features=["transactions"],
+        )
+    except stripe.error.InvalidRequestError as e:
+        if "refresh is still pending" in str(e):
+            pass
+        else:
+            raise
 
     transactions = []
     has_more = True
@@ -23,11 +29,7 @@ def _sync_one(account_id: str, card_label: str) -> dict:
         if has_more:
             starting_after = page.data[-1].id
 
-    if not transactions:
-        return {"count": 0, "url": None}
-
-    url = write_transactions_to_sheet(transactions, account_id, card_label=card_label)
-    return {"count": len(transactions), "url": url}
+    return transactions
 
 
 def run_sync_all(account_ids: list = None, labels: dict = None) -> dict:
@@ -37,14 +39,21 @@ def run_sync_all(account_ids: list = None, labels: dict = None) -> dict:
     if not account_ids:
         account_ids = [config.get("/stripe-bank-sync/linked-account-id")]
 
+    all_transactions = []  # [(txn, card_label), ...]
     total_count = 0
     last_url = None
 
     for account_id in account_ids:
-        result = _sync_one(account_id, labels.get(account_id, ""))
-        total_count += result["count"]
-        if result["url"]:
-            last_url = result["url"]
+        card_label = labels.get(account_id, account_id)
+        txns = _fetch_transactions(account_id)
+        if txns:
+            url = write_transactions_to_sheet(txns, account_id, card_label=card_label)
+            last_url = url
+            total_count += len(txns)
+            all_transactions.extend((t, card_label) for t in txns)
+
+    if all_transactions:
+        write_master_sheet(all_transactions)
 
     return {
         "count": total_count,
